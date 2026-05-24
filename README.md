@@ -31,47 +31,16 @@
 
 ```text
 
-myShell
+myshell
 │
-├── main.c  
-├── parser.h 
-├── executor.h 
-├── process_manager.h 
-├── builtins.h 
-├── utils.h 
-```
-
-
-```text 
-
-        +------------------+
-        |   User nhập lệnh |
-        +--------+---------+
-                 |
-                 v
-        +------------------+
-        |   Parse command  |
-        +--------+---------+
-                 |
-     +-----------+-----------+
-     |                       |
-     v                       v
-+------------+       +----------------+
-| Built-in   |       | External cmd  |
-+------------+       +----------------+
-     |                       |
-     v                       v
- xử lý trực tiếp     CreateProcess()
-                             |
-                +------------+------------+
-                |                         |
-                v                         v
-        Foreground                 Background
-        (wait)                    (no wait)
-                |                         |
-                +------------+------------+
-                             |
-                             v
-                    quay lại shell
-
-```
+├── src  
+│   ├── main.c  
+│   ├── parser.h 
+│   ├── executor.h 
+│   ├── process_manager.h 
+│   ├── builtins.h 
+│   ├── setcolor.h
+│   ├── utils.h 
+├── README.md
+├── shell_mechanism.tex 
+``` 
