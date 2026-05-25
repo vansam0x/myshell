@@ -18,6 +18,12 @@ int main() {
         }
         // Remove trailing newline
         input[strcspn(input, "\r\n")] = 0;
+        if (strlen(input) == 0) {
+            continue; // Ignore empty input
+        }
+        if (strcmp(input, "exit") == 0) {
+            break; // Exit the shell
+        }
         
     }
 }
