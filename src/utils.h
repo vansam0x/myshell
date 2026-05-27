@@ -18,6 +18,8 @@
 // DATA STRUCTURES
 // ============================================================
 
+#pragma once
+
 // struct storing parsed command information
 typedef struct {
     char *command;              // Command name (first token)
@@ -25,7 +27,7 @@ typedef struct {
     int   argCount;             // Number of arguments
     int   isBackground;         // 1 if '&' is at the end, 0 otherwise
     char  fullCommandLine[MAX_INPUT_LENGTH]; // Full command line for CreateProcess
-} ParsedCommand;
+} LegacyParsedCommand;
 
 // Struct storing information about a background process
 typedef struct {
