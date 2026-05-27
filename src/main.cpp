@@ -13,13 +13,26 @@
 // ============================================================
 
 #include <iostream>
+#include <fstream>
 #include <string>
+#include <algorithm>
 
 #include "set_color.h"
 #include "parser.h"
 #include "process_manager.h"
 #include "builtins.h"
 #include "executor.h"
+
+// ============================================================
+// printPrompt - Display the shell prompt with current directory
+// ============================================================
+void printPrompt() {
+    char cwd[MAX_PATH];
+    GetCurrentDirectoryA(MAX_PATH, cwd);
+    std::cout << GREEN << "myShell " << RESET 
+              << CYAN << cwd << RESET 
+              << "> ";
+}
 
 // ============================================================
 // CTRL+C HANDLER
@@ -33,29 +46,129 @@
 // ============================================================
 BOOL WINAPI CtrlHandler(DWORD ctrlType) {
     if (ctrlType == CTRL_C_EVENT) {
-        if (fg_pid != 0) {
-            // A foreground process is running.
-            // The OS will also deliver CTRL+C to the child process,
-            // which will cause it to terminate. We just need to
-            // survive by returning TRUE.
-            return TRUE;
+        if (isRunningForeground) {
+            // The child process will receive CTRL+C from the OS
+            // and terminate itself. We just need to survive.
+            return TRUE;  // TRUE = "I handled it, don't kill me"
         }
         // No foreground process --- just reprint the prompt.
-        std::cout << "\nmyShell> ";
+        std::cout << "\n";
+        printPrompt();
         return TRUE;
     }
-    return FALSE;  // Let the OS handle other control signals
+    return FALSE;  // Let the OS handle other signals
 }
 
 // ============================================================
-// printPrompt - Display the shell prompt with current directory
+// Helper: check if a command is a .bat/.cmd file
 // ============================================================
-void printPrompt() {
-    char cwd[MAX_PATH];
-    GetCurrentDirectoryA(MAX_PATH, cwd);
-    std::cout << GREEN << "myShell " << RESET 
-              << CYAN << cwd << RESET 
-              << "> ";
+static bool isBatFile(const std::string &cmd) {
+    std::string lower = cmd;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    size_t len = lower.size();
+    if (len >= 4 && (lower.substr(len - 4) == ".bat" || lower.substr(len - 4) == ".cmd")) {
+        return true;
+    }
+    return false;
+}
+
+// ============================================================
+// execute_bat_file - Interpret a .bat file using myShell
+// ============================================================
+// Reads the .bat file line by line and processes each line
+// through myShell's own pipeline:
+//   parse -> handle_builtin -> execute_command
+//
+// Supports:
+//   - @echo off (suppress echo)
+//   - REM / :: comments (skip)
+//   - All myShell built-in commands (help, date, list, etc.)
+//   - External commands via CreateProcess
+// ============================================================
+void execute_bat_file(const std::string &filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cout << RED << "[-] Error: Cannot open file '" << filename << "'\n" << RESET;
+        return;
+    }
+
+    std::cout << CYAN << "[*] Executing batch file: " << filename << "\n" << RESET;
+
+    bool echoOn = true;  // @echo off can disable command echoing
+    std::string line;
+
+
+    while (std::getline(file, line)) {
+
+        // Remove trailing \r if present (Windows line endings)
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+
+        // Skip empty lines
+        if (line.empty()) continue;
+
+        // Handle @echo off (case-insensitive)
+        std::string lowerLine = line;
+        std::transform(lowerLine.begin(), lowerLine.end(), lowerLine.begin(), ::tolower);
+
+        // Remove leading '@' (suppresses echo for this line)
+        bool suppressEcho = false;
+        std::string processLine = line;
+        if (!processLine.empty() && processLine[0] == '@') {
+            suppressEcho = true;
+            processLine = processLine.substr(1);
+            // Trim leading spaces after @
+            size_t start = processLine.find_first_not_of(" \t");
+            if (start != std::string::npos) {
+                processLine = processLine.substr(start);
+            } else {
+                continue;  // Line was just "@"
+            }
+        }
+
+        // Check for "echo off" / "echo on"
+        std::string lowerProcess = processLine;
+        std::transform(lowerProcess.begin(), lowerProcess.end(), lowerProcess.begin(), ::tolower);
+
+        if (lowerProcess == "echo off") {
+            echoOn = false;
+            continue;
+        }
+        if (lowerProcess == "echo on") {
+            echoOn = true;
+            continue;
+        }
+
+        // Skip comments: REM or ::
+        if (lowerProcess.substr(0, 4) == "rem " || lowerProcess.substr(0, 3) == "rem" ||
+            processLine.substr(0, 2) == "::") {
+            continue;
+        }
+
+        // Echo the command if echo is on and not suppressed
+        if (echoOn && !suppressEcho) {
+            std::cout << YELLOW << ">> " << processLine << RESET << "\n";
+        }
+
+        // Parse and execute through myShell's pipeline
+        ParsedCommand cmd = parse_command(processLine);
+        if (cmd.command.empty()) continue;
+
+        // Handle 'exit' specially in batch files --- just stop the script
+        if (cmd.command == "exit") {
+            std::cout << CYAN << "[*] Batch file ended by 'exit' command.\n" << RESET;
+            break;
+        }
+
+        // Try built-in first, then external
+        if (!handle_builtin(cmd.command, cmd.argc, cmd.args)) {
+            execute_command(cmd);
+        }
+    }
+
+    file.close();
+    std::cout << CYAN << "[*] Batch file '" << filename << "' finished.\n" << RESET;
 }
 
 // ============================================================
@@ -105,7 +218,13 @@ int main() {
             continue;   // Built-in handled it, back to prompt
         }
 
-        // Step 6: Not a built-in --- execute as an external command
+        // Step 6: Check if it's a .bat/.cmd file --- interpret with myShell
+        if (isBatFile(cmd.command)) {
+            execute_bat_file(cmd.command);
+            continue;
+        }
+
+        // Step 7: Not a built-in and not a bat --- execute as external command
         execute_command(cmd);
     }
 
