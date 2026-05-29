@@ -55,6 +55,8 @@ std::vector<BackgroundProcess> bgProcesses;
 // When true, the shell is waiting for a foreground process.
 // The CtrlHandler uses this to decide behavior.
 volatile BOOL isRunningForeground = FALSE;
+volatile HANDLE hForegroundProcess = NULL;
+volatile BOOL stopBatchExecution = FALSE;
 
 // ============================================================
 // Helper: convert status code to string

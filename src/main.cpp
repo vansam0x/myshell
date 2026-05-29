@@ -46,10 +46,11 @@ void printPrompt() {
 // ============================================================
 BOOL WINAPI CtrlHandler(DWORD ctrlType) {
     if (ctrlType == CTRL_C_EVENT) {
-        if (isRunningForeground) {
-            // The child process will receive CTRL+C from the OS
-            // and terminate itself. We just need to survive.
-            return TRUE;  // TRUE = "I handled it, don't kill me"
+        stopBatchExecution = TRUE;
+        if (isRunningForeground && hForegroundProcess != NULL) {
+            // Forcefully terminate the foreground process to ensure it terminates
+            TerminateProcess(hForegroundProcess, 0);
+            return TRUE;
         }
         // No foreground process --- just reprint the prompt.
         std::cout << "\n";
@@ -94,11 +95,16 @@ void execute_bat_file(const std::string &filename) {
 
     std::cout << CYAN << "[*] Executing batch file: " << filename << "\n" << RESET;
 
+    stopBatchExecution = FALSE; // Reset the interruption flag
     bool echoOn = true;  // @echo off can disable command echoing
     std::string line;
 
 
     while (std::getline(file, line)) {
+        if (stopBatchExecution) {
+            std::cout << RED << "[!] Batch file execution interrupted.\n" << RESET;
+            break;
+        }
 
         // Remove trailing \r if present (Windows line endings)
         if (!line.empty() && line.back() == '\r') {
@@ -174,7 +180,35 @@ void execute_bat_file(const std::string &filename) {
 // ============================================================
 // MAIN - The REPL (Read-Eval-Print Loop)
 // ============================================================
-int main() {
+int main(int argc, char* argv[]) {
+    // ---- Command-line Argument Parsing for Batch Execution & Path Inheritance ----
+    if (argc > 1) {
+        std::string batchFile = argv[1];
+        // Parse custom search paths if provided: --paths "dir1;dir2;..."
+        for (int i = 2; i < argc; ++i) {
+            if (std::string(argv[i]) == "--paths" && i + 1 < argc) {
+                std::string pathsStr = argv[i + 1];
+                size_t pos = 0;
+                while ((pos = pathsStr.find(';')) != std::string::npos) {
+                    std::string p = pathsStr.substr(0, pos);
+                    if (!p.empty()) {
+                        paths.push_back(p);
+                    }
+                    pathsStr.erase(0, pos + 1);
+                }
+                if (!pathsStr.empty()) {
+                    paths.push_back(pathsStr);
+                }
+                break;
+            }
+        }
+        if (isBatFile(batchFile)) {
+            // Execute the batch file silently or print as configured inside the file
+            execute_bat_file(batchFile);
+            return 0;
+        }
+    }
+
     // ---- Initialization ----
     // Enable ANSI escape codes for colored output on Windows 10+
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -220,7 +254,40 @@ int main() {
 
         // Step 6: Check if it's a .bat/.cmd file --- interpret with myShell
         if (isBatFile(cmd.command)) {
-            execute_bat_file(cmd.command);
+            if (cmd.isBackground) {
+                // Background mode: spawn a new myShell process to run the batch file
+                char szPath[MAX_PATH];
+                GetModuleFileNameA(NULL, szPath, MAX_PATH);
+
+                ParsedCommand bgBatCmd;
+                bgBatCmd.command = cmd.command;
+                bgBatCmd.args.push_back(szPath);
+                bgBatCmd.args.push_back(cmd.command);
+
+                // Pass custom search paths
+                if (!paths.empty()) {
+                    bgBatCmd.args.push_back("--paths");
+                    std::string pathsStr;
+                    for (size_t i = 0; i < paths.size(); ++i) {
+                        if (i > 0) pathsStr += ";";
+                        pathsStr += paths[i];
+                    }
+                    bgBatCmd.args.push_back(pathsStr);
+                }
+
+                bgBatCmd.argc = bgBatCmd.args.size();
+                bgBatCmd.isBackground = true;
+
+                // Build fullCommandLine for logging/execution
+                bgBatCmd.fullCommandLine = "\"" + std::string(szPath) + "\"";
+                for (size_t i = 1; i < bgBatCmd.args.size(); ++i) {
+                    bgBatCmd.fullCommandLine += " " + bgBatCmd.args[i];
+                }
+
+                execute_command(bgBatCmd);
+            } else {
+                execute_bat_file(cmd.command);
+            }
             continue;
         }
 
