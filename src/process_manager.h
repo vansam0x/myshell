@@ -209,8 +209,29 @@ void stopProcess(DWORD pid) {
         return;
     }
 
-    DWORD result = SuspendThread(proc->hThread);
-    if (result != (DWORD)-1) {
+    // Try suspending the entire process using NtSuspendProcess
+    bool suspended = false;
+    HMODULE hNtDll = GetModuleHandleA("ntdll.dll");
+    if (hNtDll) {
+        typedef LONG(NTAPI* pfnNtSuspendProcess)(HANDLE ProcessHandle);
+        pfnNtSuspendProcess NtSuspendProcess = (pfnNtSuspendProcess)GetProcAddress(hNtDll, "NtSuspendProcess");
+        if (NtSuspendProcess) {
+            LONG status = NtSuspendProcess(proc->hProcess);
+            if (status >= 0) { // NT_SUCCESS
+                suspended = true;
+            }
+        }
+    }
+
+    // Fallback: suspend main thread
+    if (!suspended) {
+        DWORD result = SuspendThread(proc->hThread);
+        if (result != (DWORD)-1) {
+            suspended = true;
+        }
+    }
+
+    if (suspended) {
         proc->status = PROC_STOPPED;
         std::cout << GREEN << "[+] Process " << pid << " stopped.\n" << RESET;
     } else {
@@ -234,8 +255,29 @@ void resumeProcess(DWORD pid) {
         return;
     }
 
-    DWORD result = ResumeThread(proc->hThread);
-    if (result != (DWORD)-1) {
+    // Try resuming the entire process using NtResumeProcess
+    bool resumed = false;
+    HMODULE hNtDll = GetModuleHandleA("ntdll.dll");
+    if (hNtDll) {
+        typedef LONG(NTAPI* pfnNtResumeProcess)(HANDLE ProcessHandle);
+        pfnNtResumeProcess NtResumeProcess = (pfnNtResumeProcess)GetProcAddress(hNtDll, "NtResumeProcess");
+        if (NtResumeProcess) {
+            LONG status = NtResumeProcess(proc->hProcess);
+            if (status >= 0) { // NT_SUCCESS
+                resumed = true;
+            }
+        }
+    }
+
+    // Fallback: resume main thread
+    if (!resumed) {
+        DWORD result = ResumeThread(proc->hThread);
+        if (result != (DWORD)-1) {
+            resumed = true;
+        }
+    }
+
+    if (resumed) {
         proc->status = PROC_RUNNING;
         std::cout << GREEN << "[+] Process " << pid << " resumed.\n" << RESET;
     } else {

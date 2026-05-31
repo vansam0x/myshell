@@ -68,6 +68,45 @@ static std::string resolveFromCustomPaths(const std::string &command) {
 }
 
 // ============================================================
+// isExeFile - Check if a command is a .exe file
+// ============================================================
+static bool isExeFile(const std::string &command, const std::string &resolvedPath) {
+    std::string pathToCheck = resolvedPath.empty() ? command : resolvedPath;
+    
+    // Convert to lowercase for comparison
+    std::string lower = pathToCheck;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    
+    // Trim trailing quotes if any
+    if (lower.size() >= 2 && lower.front() == '"' && lower.back() == '"') {
+        lower = lower.substr(1, lower.size() - 2);
+    }
+    
+    size_t len = lower.size();
+    if (len >= 4 && lower.substr(len - 4) == ".exe") {
+        return true;
+    }
+    
+    // Check if it has no extension and resolves to .exe via SearchPathA
+    size_t dotPos = lower.find_last_of('.');
+    size_t slashPos = lower.find_last_of("\\/");
+    if (dotPos == std::string::npos || (slashPos != std::string::npos && dotPos < slashPos)) {
+        char buffer[MAX_PATH];
+        LPSTR filePart;
+        DWORD searchResult = SearchPathA(NULL, pathToCheck.c_str(), ".exe", MAX_PATH, buffer, &filePart);
+        if (searchResult > 0) {
+            std::string resolvedSearch = buffer;
+            std::transform(resolvedSearch.begin(), resolvedSearch.end(), resolvedSearch.begin(), ::tolower);
+            if (resolvedSearch.size() >= 4 && resolvedSearch.substr(resolvedSearch.size() - 4) == ".exe") {
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+// ============================================================
 // buildCommandLine - construct the full command line string
 // ============================================================
 // Tries custom paths if direct execution might fail.
@@ -132,41 +171,55 @@ void execute_command(const ParsedCommand &cmd) {
     strncpy(cmdLine, commandLine.c_str(), sizeof(cmdLine) - 1);
     cmdLine[sizeof(cmdLine) - 1] = '\0';
 
+    // Resolve path to check if it is a .exe file
+    std::string resolvedPath = resolveFromCustomPaths(cmd.command);
+    bool isExe = isExeFile(cmd.command, resolvedPath);
+
     // Attempt to create the process
-    // For background processes, use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
-    // so that:
-    //   1. Ctrl+C signals are NOT forwarded to them from the parent console.
-    //   2. They are detached from the parent console session, preventing the console
-    //      subsystem from locking up when the background process is suspended (stopped).
-    DWORD creationFlags = cmd.isBackground ? (CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS) : 0;
+    // For .exe files, launch them in a new console/shell window (CREATE_NEW_CONSOLE)
+    // For non-.exe background processes, use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
+    DWORD creationFlags = 0;
+    if (isExe) {
+        creationFlags = CREATE_NEW_CONSOLE;
+        if (cmd.isBackground) {
+            creationFlags |= CREATE_NEW_PROCESS_GROUP;
+        }
+    } else {
+        creationFlags = cmd.isBackground ? (CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS) : 0;
+    }
 
     HANDLE hNul = INVALID_HANDLE_VALUE;
     BOOL inheritHandles = FALSE;
 
-    if (cmd.isBackground) {
-        SECURITY_ATTRIBUTES sa;
-        sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-        sa.lpSecurityDescriptor = NULL;
-        sa.bInheritHandle = TRUE;
+    if (isExe) {
+        // Run with default standard handles of the new console session
+        inheritHandles = FALSE;
+    } else {
+        if (cmd.isBackground) {
+            SECURITY_ATTRIBUTES sa;
+            sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+            sa.lpSecurityDescriptor = NULL;
+            sa.bInheritHandle = TRUE;
 
-        hNul = CreateFileA("NUL", GENERIC_READ | GENERIC_WRITE,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE,
-                           &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            hNul = CreateFileA("NUL", GENERIC_READ | GENERIC_WRITE,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
-        if (hNul != INVALID_HANDLE_VALUE) {
+            if (hNul != INVALID_HANDLE_VALUE) {
+                si.dwFlags |= STARTF_USESTDHANDLES;
+                si.hStdInput = hNul;
+                si.hStdOutput = hNul;
+                si.hStdError = hNul;
+                inheritHandles = TRUE;
+            }
+        } else {
+            // Foreground command: inherit the parent's standard handles
             si.dwFlags |= STARTF_USESTDHANDLES;
-            si.hStdInput = hNul;
-            si.hStdOutput = hNul;
-            si.hStdError = hNul;
+            si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+            si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+            si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
             inheritHandles = TRUE;
         }
-    } else {
-        // Foreground command: inherit the parent's standard handles
-        si.dwFlags |= STARTF_USESTDHANDLES;
-        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-        si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-        inheritHandles = TRUE;
     }
 
     BOOL success = CreateProcessA(

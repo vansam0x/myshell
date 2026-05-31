@@ -19,6 +19,8 @@
 #include <vector>
 #include <windows.h>
 #include <iostream>
+#include <algorithm>
+#include <cctype>
 
 // ============================================================
 // help - Print usage guide
@@ -40,6 +42,7 @@ void help() {
     std::cout << YELLOW << "\n Path Management:\n" << RESET;
     std::cout << "   path                 Show custom search paths\n";
     std::cout << "   addpath <path>       Add a directory to search paths\n";
+    std::cout << "   delpath <idx|path>   Remove a directory from search paths\n";
 
     std::cout << YELLOW << "\n Process Management:\n" << RESET;
     std::cout << "   list                 List all background processes\n";
@@ -77,6 +80,47 @@ void path() {
 void addpath(const std::string &new_path) {
     paths.push_back(new_path);
     std::cout << "[+] Path added: " << new_path << "\n";
+}
+
+// ============================================================
+// delpath - Remove a directory from custom search paths
+// ============================================================
+void delete_path(const std::string &target) {
+    if (target.empty()) {
+        std::cout << "Usage: delpath <index | path_string>\n";
+        return;
+    }
+
+    // Try to parse target as index (1-based)
+    bool isIndex = true;
+    for (char c : target) {
+        if (!isdigit(c)) {
+            isIndex = false;
+            break;
+        }
+    }
+
+    if (isIndex && !target.empty()) {
+        int idx = std::stoi(target) - 1;
+        if (idx >= 0 && idx < static_cast<int>(paths.size())) {
+            std::string removed = paths[idx];
+            paths.erase(paths.begin() + idx);
+            std::cout << "[+] Path removed: " << removed << "\n";
+            return;
+        } else {
+            std::cout << "[-] Error: Invalid path index: " << target << "\n";
+            return;
+        }
+    }
+
+    // Try to remove by string matching
+    auto it = std::find(paths.begin(), paths.end(), target);
+    if (it != paths.end()) {
+        paths.erase(it);
+        std::cout << "[+] Path removed: " << target << "\n";
+    } else {
+        std::cout << "[-] Error: Path not found in search paths: " << target << "\n";
+    }
 }
 
 // ============================================================
@@ -200,6 +244,16 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
         } else {
             for (size_t i = 1; i < argc; ++i) {
                 addpath(args[i]);
+            }
+        }
+        return true;
+    }
+    if (cmd == "delpath" || cmd == "removepath") {
+        if (argc < 2) {
+            std::cout << "Usage: delpath <index | path_string>\n";
+        } else {
+            for (size_t i = 1; i < argc; ++i) {
+                delete_path(args[i]);
             }
         }
         return true;
