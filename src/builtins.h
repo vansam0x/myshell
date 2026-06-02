@@ -1,16 +1,3 @@
-// ============================================================
-// BUILTINS MODULE
-// ============================================================
-// Built-in commands are executed directly inside the shell
-// process, NOT in a child process.
-//
-// Reason: commands like 'exit' and 'addpath' must modify the
-// shell's own state. A child process cannot do that.
-//
-// Supported: help, exit, cd, dir, date, time, path, addpath,
-//            list, kill, stop, resume
-// ============================================================
-
 #pragma once
 
 #include "set_color.h"
@@ -22,9 +9,6 @@
 #include <algorithm>
 #include <cctype>
 
-// ============================================================
-// help - Print usage guide
-// ============================================================
 void help() {
     std::cout << CYAN << BOLD
               << "============================================\n"
@@ -42,7 +26,7 @@ void help() {
     std::cout << YELLOW << "\n Path Management:\n" << RESET;
     std::cout << "   path                 Show custom search paths\n";
     std::cout << "   addpath <path>       Add a directory to search paths\n";
-    std::cout << "   delpath <idx|path>   Remove a directory from search paths\n";
+    std::cout << "   delpath <path>       Remove a directory from search paths\n";
 
     std::cout << YELLOW << "\n Process Management:\n" << RESET;
     std::cout << "   list                 List all background processes\n";
@@ -74,58 +58,142 @@ void path() {
     }
 }
 
-// ============================================================
-// addpath - Add a directory to custom search paths
-// ============================================================
-void addpath(const std::string &new_path) {
-    paths.push_back(new_path);
-    std::cout << "[+] Path added: " << new_path << "\n";
+inline std::string getAbsolutePath(const std::string &path) {
+    char absPath[MAX_PATH];
+    DWORD len = GetFullPathNameA(path.c_str(), MAX_PATH, absPath, NULL);
+    if (len > 0 && len < MAX_PATH) {
+        return std::string(absPath, len);
+    }
+    return path;
 }
 
-// ============================================================
-// delpath - Remove a directory from custom search paths
-// ============================================================
-void delete_path(const std::string &target) {
+inline std::string getEnvPath() {
+    char buffer[32767];
+    DWORD len = GetEnvironmentVariableA("PATH", buffer, 32767);
+    if (len > 0 && len < 32767) {
+        return std::string(buffer, len);
+    }
+    return "";
+}
+
+inline void addpath_internal(const std::string &new_path, bool print = true) {
+    std::string abs_path = getAbsolutePath(new_path);
+
+    auto it = std::find(paths.begin(), paths.end(), abs_path);
+    if (it == paths.end()) {
+        paths.push_back(abs_path);
+    }
+
+    std::string current_path = getEnvPath();
+    bool exists = false;
+    size_t start = 0;
+    size_t pos = 0;
+
+    std::string target_norm = abs_path;
+    std::transform(target_norm.begin(), target_norm.end(), target_norm.begin(), ::tolower);
+    std::replace(target_norm.begin(), target_norm.end(), '/', '\\');
+
+    while ((pos = current_path.find(';', start)) != std::string::npos) {
+        std::string part = current_path.substr(start, pos - start);
+        std::string part_norm = part;
+        std::transform(part_norm.begin(), part_norm.end(), part_norm.begin(), ::tolower);
+        std::replace(part_norm.begin(), part_norm.end(), '/', '\\');
+        if (part_norm == target_norm) {
+            exists = true;
+        }
+        start = pos + 1;
+    }
+    if (start < current_path.size()) {
+        std::string part = current_path.substr(start);
+        std::string part_norm = part;
+        std::transform(part_norm.begin(), part_norm.end(), part_norm.begin(), ::tolower);
+        std::replace(part_norm.begin(), part_norm.end(), '/', '\\');
+        if (part_norm == target_norm) {
+            exists = true;
+        }
+    }
+
+    if (!exists) {
+        if (!current_path.empty() && current_path.back() != ';') {
+            current_path += ";";
+        }
+        current_path += abs_path;
+        SetEnvironmentVariableA("PATH", current_path.c_str());
+    }
+
+    if (print) {
+        std::cout << "[+] Path added: " << abs_path << "\n";
+    }
+}
+
+inline void addpath(const std::string &new_path) {
+    addpath_internal(new_path, true);
+}
+
+inline void delete_path(const std::string &target) {
     if (target.empty()) {
-        std::cout << "Usage: delpath <index | path_string>\n";
+        std::cout << "Usage: delpath <path>\n";
         return;
     }
 
-    // Try to parse target as index (1-based)
-    bool isIndex = true;
-    for (char c : target) {
-        if (!isdigit(c)) {
-            isIndex = false;
-            break;
-        }
-    }
+    std::string abs_path = getAbsolutePath(target);
+    bool found = false;
 
-    if (isIndex && !target.empty()) {
-        int idx = std::stoi(target) - 1;
-        if (idx >= 0 && idx < static_cast<int>(paths.size())) {
-            std::string removed = paths[idx];
-            paths.erase(paths.begin() + idx);
-            std::cout << "[+] Path removed: " << removed << "\n";
-            return;
+    std::string target_norm = abs_path;
+    std::transform(target_norm.begin(), target_norm.end(), target_norm.begin(), ::tolower);
+    std::replace(target_norm.begin(), target_norm.end(), '/', '\\');
+
+    for (auto it = paths.begin(); it != paths.end(); ) {
+        std::string p_norm = *it;
+        std::transform(p_norm.begin(), p_norm.end(), p_norm.begin(), ::tolower);
+        std::replace(p_norm.begin(), p_norm.end(), '/', '\\');
+        if (p_norm == target_norm) {
+            it = paths.erase(it);
+            found = true;
         } else {
-            std::cout << "[-] Error: Invalid path index: " << target << "\n";
-            return;
+            ++it;
         }
     }
 
-    // Try to remove by string matching
-    auto it = std::find(paths.begin(), paths.end(), target);
-    if (it != paths.end()) {
-        paths.erase(it);
-        std::cout << "[+] Path removed: " << target << "\n";
-    } else {
+    if (!found) {
         std::cout << "[-] Error: Path not found in search paths: " << target << "\n";
+        return;
     }
+
+    std::cout << "[+] Path removed: " << abs_path << "\n";
+
+    std::string current_path = getEnvPath();
+    std::vector<std::string> parts;
+    size_t start = 0;
+    size_t pos = 0;
+    while ((pos = current_path.find(';', start)) != std::string::npos) {
+        std::string part = current_path.substr(start, pos - start);
+        std::string part_norm = part;
+        std::transform(part_norm.begin(), part_norm.end(), part_norm.begin(), ::tolower);
+        std::replace(part_norm.begin(), part_norm.end(), '/', '\\');
+        if (part_norm != target_norm && !part.empty()) {
+            parts.push_back(part);
+        }
+        start = pos + 1;
+    }
+    if (start < current_path.size()) {
+        std::string part = current_path.substr(start);
+        std::string part_norm = part;
+        std::transform(part_norm.begin(), part_norm.end(), part_norm.begin(), ::tolower);
+        std::replace(part_norm.begin(), part_norm.end(), '/', '\\');
+        if (part_norm != target_norm && !part.empty()) {
+            parts.push_back(part);
+        }
+    }
+
+    std::string new_path_env = "";
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) new_path_env += ";";
+        new_path_env += parts[i];
+    }
+    SetEnvironmentVariableA("PATH", new_path_env.c_str());
 }
 
-// ============================================================
-// dir - List files in a directory
-// ============================================================
 void dir(std::string dirPath = "") {
     if (dirPath.empty()) {
         char buf[MAX_PATH];
@@ -158,28 +226,17 @@ void dir(std::string dirPath = "") {
 
     std::cout << "\n  " << fileCount << " file(s), " << dirCount << " dir(s)\n";
 }
-
-// ============================================================
-// get_time - Display current time
-// ============================================================
 void get_time() {
     SYSTEMTIME st;
     GetLocalTime(&st);
     printf("Time: %02d:%02d:%02d\n", st.wHour, st.wMinute, st.wSecond);
 }
 
-// ============================================================
-// get_date - Display current date
-// ============================================================
 void get_date() {
     SYSTEMTIME st;
     GetLocalTime(&st);
     printf("Date: %02d/%02d/%04d\n", st.wDay, st.wMonth, st.wYear);
 }
-
-// ============================================================
-// cd - Change current directory
-// ============================================================
 void cd(const std::string &path) {
     if (SetCurrentDirectoryA(path.c_str())) {
         char buf[MAX_PATH];
@@ -189,16 +246,8 @@ void cd(const std::string &path) {
         std::cout << "[-] Error: Cannot find path: " << path << "\n";
     }
 }
-
-// ============================================================
-// handle_builtin - Dispatch built-in commands
-// Returns true if the command was a built-in, false otherwise.
-//
-// Note: args[0] = command name, args[1..] = actual arguments
-// ============================================================
 bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::string> &args) {
 
-    // ---- General commands ----
     if (cmd == "help") {
         help();
         return true;
@@ -210,7 +259,6 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
     }
     if (cmd == "cd") {
         if (argc < 2) {
-            // No argument: print current directory
             char buf[MAX_PATH];
             GetCurrentDirectoryA(MAX_PATH, buf);
             std::cout << buf << "\n";
@@ -220,7 +268,7 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
         return true;
     }
     if (cmd == "dir") {
-        if (argc < 2) dir();       // No argument: current directory
+        if (argc < 2) dir();       
         else           dir(args[1]);
         return true;
     }
@@ -233,7 +281,6 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
         return true;
     }
 
-    // ---- Path management ----
     if (cmd == "path") {
         path();
         return true;
@@ -242,24 +289,29 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
         if (argc < 2) {
             std::cout << "Usage: addpath <directory>\n";
         } else {
+            std::string full_path = "";
             for (size_t i = 1; i < argc; ++i) {
-                addpath(args[i]);
+                if (i > 1) full_path += " ";
+                full_path += args[i];
             }
+            addpath(full_path);
         }
         return true;
     }
     if (cmd == "delpath" || cmd == "removepath") {
         if (argc < 2) {
-            std::cout << "Usage: delpath <index | path_string>\n";
+            std::cout << "Usage: delpath <path>\n";
         } else {
+            std::string full_path = "";
             for (size_t i = 1; i < argc; ++i) {
-                delete_path(args[i]);
+                if (i > 1) full_path += " ";
+                full_path += args[i];
             }
+            delete_path(full_path);
         }
         return true;
     }
 
-    // ---- Process management ----
     if (cmd == "list") {
         listProcesses();
         return true;
@@ -292,5 +344,5 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
         return true;
     }
 
-    return false;  // Not a built-in command
+    return false; 
 }

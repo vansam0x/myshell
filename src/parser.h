@@ -1,18 +1,3 @@
-// ============================================================
-// PARSER MODULE
-// ============================================================
-// Module responsible for parsing command-line input.
-//
-// Input:  "notepad hello.txt &"
-// Output: ParsedCommand {
-//            command = "notepad",
-//            args = {"notepad", "hello.txt", NULL},
-//            argCount = 2,
-//            isBackground = 1,
-//            fullCommandLine = "notepad hello.txt"
-//         }
-// ============================================================
-
 #pragma once
 #include <string>
 #include <vector>
