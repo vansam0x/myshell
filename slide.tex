@@ -1,0 +1,178 @@
+\documentclass{beamer}
+
+% ============================================================
+% THEME & COLORS
+% ============================================================
+\usetheme{Madrid}
+\usecolortheme{whale}
+
+% Custom color scheme (Premium Blue style)
+\definecolor{customBlue}{RGB}{29, 78, 216}     % Royal Blue
+\definecolor{customDarkBlue}{RGB}{30, 58, 138} % Deep Navy Blue
+\setbeamercolor{palette primary}{bg=customBlue, fg=white}
+\setbeamercolor{palette secondary}{bg=customDarkBlue, fg=white}
+\setbeamercolor{palette tertiary}{bg=black, fg=white}
+\setbeamercolor{titlelike}{parent=palette primary}
+\setbeamercolor{structure}{fg=customBlue}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[vietnamese]{babel}
+\usepackage{booktabs}
+
+% ============================================================
+% TITLE PAGE
+% ============================================================
+\title[myShell]{Báo cáo Bài tập lớn Hệ điều hành\\Chương trình Shell đơn giản (myShell)}
+\author[Phạm Văn Sâm]{Sinh viên thực hiện: Phạm Văn Sâm\\MSSV: 202400114}
+\institute[HUST]{Trường Đại học Bách Khoa Hà Nội}
+\date{\today}
+
+\begin{document}
+
+% Slide 1: Title
+\begin{frame}
+    \titlepage
+\end{frame}
+
+% ============================================================
+% PHẦN 1: GIỚI THIỆU KHÁI NIỆM & DANH SÁCH LỆNH
+% ============================================================
+\section{Khái niệm \& Danh sách lệnh}
+
+\begin{frame}{Shell là gì? Chu trình REPL}
+    \begin{block}{Khái niệm đơn giản}
+        **Shell** là phần mềm giao diện dòng lệnh giúp người dùng tương tác trực tiếp với nhân hệ điều hành (Kernel).
+    \end{block}
+    \begin{block}{Chu trình hoạt động (REPL)}
+        \begin{itemize}
+            \item **Read:** Đọc dòng lệnh người dùng gõ từ bàn phím.
+            \item **Eval:** Phân tích cú pháp và thực thi lệnh (Built-in hoặc tạo tiến trình con qua `CreateProcess`).
+            \item **Print:** In kết quả ra màn hình.
+            \item **Loop:** Lặp lại chu trình vô hạn.
+        \end{itemize}
+    \end{block}
+\end{frame}
+
+\begin{frame}{Danh sách lệnh nội trú (Built-in Commands)}
+    Các lệnh được thực thi trực tiếp ngay trong tiến trình của Shell:
+    \begin{itemize}
+        \item \textbf{`help`}: Hiển thị bảng hướng dẫn sử dụng shell.
+        \item \textbf{`exit`}: Giải phóng các tài nguyên và thoát khỏi shell.
+        \item \textbf{`cd <path>`}: Chuyển thư mục làm việc hiện hành. Gõ `cd` không tham số để in đường dẫn hiện hành.
+        \item \textbf{`dir [path]`}: Liệt kê nội dung thư mục hiện tại hoặc thư mục chỉ định.
+        \item \textbf{`date`}: Xem ngày hiện tại của hệ thống.
+        \item \textbf{`time`}: Xem giờ hiện tại của hệ thống.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Quản lý đường dẫn (Path Management)}
+    Các lệnh thao tác với các đường dẫn tìm kiếm chương trình tùy chỉnh:
+    \begin{itemize}
+        \item \textbf{`path`}: Xem danh sách các thư mục tìm kiếm tùy chỉnh đang được cấu hình trong shell.
+        \item \textbf{`addpath <path>`}: Thêm một thư mục vào danh sách tìm kiếm (Tự động lưu dạng đường dẫn tuyệt đối và đồng bộ vào biến môi trường `PATH` của tiến trình).
+        \item \textbf{`delpath <path>`}: Xóa đường dẫn khỏi danh sách tìm kiếm bằng tên trực tiếp (không cần ID/index) và cập nhật lại biến môi trường `PATH`.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Quản lý tiến trình (Process Management)}
+    Chạy chương trình ngoài ở hai chế độ:
+    \begin{itemize}
+        \item **Foreground:** Chạy trực tiếp, shell sẽ đợi tiến trình con chạy xong.
+        \item **Background:** Thêm dấu `&` ở cuối lệnh. Shell chạy chương trình ngầm và trả lại dấu nhắc lệnh ngay lập tức.
+    \end{itemize}
+    \begin{block}{Các lệnh điều khiển tiến trình chạy ẩn}
+        \begin{itemize}
+            \item \textbf{`list`}: Xem danh sách các tiến trình chạy nền kèm PID và trạng thái.
+            \item \textbf{`stop <pid>`}: Tạm dừng một tiến trình nền đang chạy.
+            \item \textbf{`resume <pid>`}: Tiếp tục chạy tiến trình nền đang bị tạm dừng.
+            \item \textbf{`kill <pid>`}: Dừng cưỡng bức (hủy) một tiến trình nền.
+        \end{itemize}
+    \end{block}
+\end{frame}
+
+\begin{frame}{Xử lý Ctrl+C \& Tệp batch (`.bat`)}
+    \begin{block}{Xử lý tín hiệu ngắt (Ctrl+C)}
+        \begin{itemize}
+            \item Khi bấm `Ctrl+C`, nếu có tiến trình Foreground đang chạy, tiến trình đó sẽ bị dừng lập tức.
+            \item Chương trình Shell cha vẫn được giữ sống để người dùng tiếp tục thao tác.
+        \end{itemize}
+    \end{block}
+    \begin{block}{Thực thi tệp kịch bản `.bat`}
+        \begin{itemize}
+            \item Đọc và chạy lần lượt các dòng lệnh cấu hình trong tệp `.bat`.
+            \item Hỗ trợ ẩn hiển thị lệnh (`@echo off`) và chạy dưới nền (ví dụ: `test.bat &`).
+        \end{itemize}
+    \end{block}
+\end{frame}
+
+% ============================================================
+% PHẦN 2: KỊCH BẢN DEMO
+% ============================================================
+\section{Kịch bản Demo}
+
+\begin{frame}{Kịch bản Demo 1: Lệnh nội trú \& Biến môi trường}
+    Các bước gõ lệnh Demo trực tiếp cho giảng viên xem:
+    \begin{enumerate}
+        \item **In giờ ngày và trợ giúp:**
+              \begin{itemize}
+                  \item Gõ `help`
+                  \item Gõ `date`, `time`
+              \end{itemize}
+        \item **Thao tác thư mục:**
+              \begin{itemize}
+                  \item Gõ `cd` (In thư mục hiện tại)
+                  \item Gõ `dir` (Liệt kê danh sách file)
+              \end{itemize}
+        \item **Đồng bộ hóa PATH (addpath/delpath):**
+              \begin{itemize}
+                  \item Gõ `addpath test` (Thêm thư mục tuyệt đối)
+                  \item Gõ `path` (Xem danh sách)
+                  \item Di chuyển sang thư mục khác `cd src` rồi chạy thử tệp thực thi trong thư mục `test` bằng tên (ví dụ: `hello`).
+                  \item Gõ `delpath C:\...\test` để xóa đường dẫn bằng tên.
+              \end{itemize}
+    \end{enumerate}
+\end{frame}
+
+\begin{frame}{Kịch bản Demo 2: Quản lý tiến trình \& Ctrl+C}
+    \begin{enumerate}
+        \item **Chạy Foreground và dừng bằng Ctrl+C:**
+              \begin{itemize}
+                  \item Gõ `ping -t 127.0.0.1` (Chương trình chạy liên tục)
+                  \item Nhấn tổ hợp phím `Ctrl + C` $\rightarrow$ tiến trình dừng và Shell hiển thị lại dấu nhắc lệnh bình thường.
+              \end{itemize}
+        \item **Chạy Background và kiểm soát:**
+              \begin{itemize}
+                  \item Gõ `ping -t 127.0.0.1 &` $\rightarrow$ Tiến trình chạy ẩn dưới nền.
+                  \item Gõ `list` $\rightarrow$ Xem PID và trạng thái tiến trình nền.
+                  \item Gõ `stop <pid>` $\rightarrow$ Tạm ngưng tiến trình nền.
+                  \item Gõ `list` $\rightarrow$ Trạng thái chuyển sang `Stopped`.
+                  \item Gõ `resume <pid>` $\rightarrow$ Cho chạy tiếp.
+                  \item Gõ `kill <pid>` $\rightarrow$ Hủy tiến trình hoàn toàn.
+              \end{itemize}
+    \end{enumerate}
+\end{frame}
+
+\begin{frame}{Kịch bản Demo 3: Thực thi tệp `.bat`}
+    \begin{enumerate}
+        \item **Chạy tệp script tuần tự:**
+              \begin{itemize}
+                  \item Gõ `test/2.bat` $\rightarrow$ Shell đọc và in kết quả chạy của từng dòng lệnh bên trong tệp batch.
+              \end{itemize}
+        \item **Chạy tệp script dưới nền (Background):**
+              \begin{itemize}
+                  \item Gõ `test/2.bat &` $\rightarrow$ Chạy ngầm tệp kịch bản.
+                  \item Gõ `list` để xem trạng thái tiến trình nền thực thi script.
+              \end{itemize}
+    \end{enumerate}
+\end{frame}
+
+\begin{frame}
+    \begin{center}
+        \Huge \color{customBlue} Cảm ơn thầy đã theo dõi!\\
+        \vspace{1cm}
+        \Large Câu hỏi \& Đóng góp ý kiến
+    \end{center}
+\end{frame}
+
+\end{document}
