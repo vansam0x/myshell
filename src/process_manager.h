@@ -1,191 +1,214 @@
-// ============================================================
-// PROCESS MANAGER MODULE
-// ============================================================ 
-// Module manages background processes created by the shell.
-// It maintains a map of background processes and provides
-// commands to list, kill, stop, and resume them.
-//
-// Main data:
-//   - std::map<DWORD, BgProcess> bgProcesses
-//   - DWORD fg_pid  (PID of current foreground process)
-// ============================================================
-
 #pragma once
 
 #include <windows.h>
-#include <map>
-#include <string>
 #include <iostream>
+#include <vector>
+#include <string>
+#include <iomanip>
+#include "set_color.h"
 
-// ---- Status codes ----
-#define STATUS_RUNNING    0
-#define STATUS_STOPPED    1
-#define STATUS_TERMINATED 2
-
-// ---- Background process info ----
-struct BgProcess {
-    HANDLE      hProcess;       // Handle to the process (for Kill, Wait)
-    HANDLE      hThread;        // Handle to the main thread (for Stop, Resume)
-    DWORD       dwProcessId;    // Process ID
-    DWORD       dwThreadId;     // Thread ID
-    std::string cmdName;        // Original command name
-    int         status;         // STATUS_RUNNING | STATUS_STOPPED | STATUS_TERMINATED
+enum ProcessStatus {
+    PROC_RUNNING    = 0,
+    PROC_STOPPED    = 1,
+    PROC_TERMINATED = 2
 };
+struct BackgroundProcess {
+    DWORD       pid;        
+    HANDLE      hProcess;   
+    HANDLE      hThread;    
+    std::string cmdName;    
+    int         status;     
+};
+std::vector<BackgroundProcess> bgProcesses;
+volatile BOOL isRunningForeground = FALSE;
+volatile HANDLE hForegroundProcess = NULL;
+volatile BOOL stopBatchExecution = FALSE;
 
-// ---- Global data ----
-std::map<DWORD, BgProcess> bgProcesses;   // All background processes
-DWORD fg_pid = 0;                         // PID of the foreground process (0 = none)
-
-// ============================================================
-// HELPER: Get status as string
-// ============================================================
 const char* getStatusString(int status) {
     switch (status) {
-        case STATUS_RUNNING:    return "RUNNING";
-        case STATUS_STOPPED:    return "STOPPED";
-        case STATUS_TERMINATED: return "TERMINATED";
-        default:                return "UNKNOWN";
+        case PROC_RUNNING:    return "RUNNING";
+        case PROC_STOPPED:    return "STOPPED";
+        case PROC_TERMINATED: return "TERMINATED";
+        default:              return "UNKNOWN";
     }
 }
 
-// ============================================================
-// addProcess - Save a new background process to the map
-// ============================================================
-void addProcess(const PROCESS_INFORMATION &pi, const std::string &cmdName) {
-    BgProcess bp;
-    bp.hProcess    = pi.hProcess;
-    bp.hThread     = pi.hThread;
-    bp.dwProcessId = pi.dwProcessId;
-    bp.dwThreadId  = pi.dwThreadId;
-    bp.cmdName     = cmdName;
-    bp.status      = STATUS_RUNNING;
-    bgProcesses[pi.dwProcessId] = bp;
+void refreshProcessStatus() {
+    for (auto &proc : bgProcesses) {
+        if (proc.status == PROC_TERMINATED) continue;
+        DWORD result = WaitForSingleObject(proc.hProcess, 0);
+        if (result == WAIT_OBJECT_0) {
+            proc.status = PROC_TERMINATED;
+            CloseHandle(proc.hProcess);
+            CloseHandle(proc.hThread);
+            proc.hProcess = NULL;
+            proc.hThread  = NULL;
+        }
+    }
 }
 
-// ============================================================
-// listProcesses - Display all background processes with status
-// Uses WaitForSingleObject(h, 0) to poll without blocking
-// ============================================================
+void addProcess(PROCESS_INFORMATION &pi, const std::string &cmdName) {
+    BackgroundProcess bp;
+    bp.pid      = pi.dwProcessId;
+    bp.hProcess = pi.hProcess;
+    bp.hThread  = pi.hThread;
+    bp.cmdName  = cmdName;
+    bp.status   = PROC_RUNNING;
+    bgProcesses.push_back(bp);
+}
+
 void listProcesses() {
-    if (bgProcesses.empty()) {
-        std::cout << "No background processes.\n";
-        return;
-    }
-
-    // First pass: poll and update status of running processes
-    for (auto &[pid, bp] : bgProcesses) {
-        if (bp.status == STATUS_RUNNING) {
-            DWORD result = WaitForSingleObject(bp.hProcess, 0);
-            if (result == WAIT_OBJECT_0) {
-                // Process has exited naturally
-                bp.status = STATUS_TERMINATED;
-                CloseHandle(bp.hProcess);
-                CloseHandle(bp.hThread);
-            }
+    refreshProcessStatus();
+    bool hasAny = false;
+    for (const auto &proc : bgProcesses) {
+        if (proc.status != PROC_TERMINATED) {
+            hasAny = true;
+            break;
         }
     }
 
-    // Second pass: print the list
-    std::cout << "----------------------------------------------\n";
-    std::cout << "PID\tSTATUS\t\tCOMMAND\n";
-    std::cout << "----------------------------------------------\n";
-    for (const auto &[pid, bp] : bgProcesses) {
-        std::cout << bp.dwProcessId << "\t"
-                  << getStatusString(bp.status) << "\t\t"
-                  << bp.cmdName << "\n";
+    if (!hasAny) {
+        std::cout << "No background processes.\n";
+        return;
     }
-    std::cout << "----------------------------------------------\n";
+    std::cout << CYAN << BOLD
+              << std::left
+              << std::setw(10) << "PID"
+              << std::setw(30) << "COMMAND"
+              << std::setw(15) << "STATUS"
+              << RESET << "\n";
+    std::cout << std::string(55, '-') << "\n";
+    for (const auto &proc : bgProcesses) {
+        if (proc.status == PROC_TERMINATED) continue;
+        const char* color = (proc.status == PROC_RUNNING) ? GREEN :
+                            (proc.status == PROC_STOPPED) ? YELLOW : RED;
+
+        std::cout << std::left
+                  << std::setw(10) << proc.pid
+                  << std::setw(30) << proc.cmdName
+                  << color << std::setw(15) << getStatusString(proc.status)
+                  << RESET << "\n";
+    }
 }
 
-// ============================================================
-// killProcess - Forcefully terminate a process by PID
-// API: TerminateProcess(hProcess, 0)
-// ============================================================
-bool killProcess(DWORD pid) {
-    auto it = bgProcesses.find(pid);
-    if (it == bgProcesses.end()) {
-        std::cout << "[-] Error: Process " << pid << " not found.\n";
-        return false;
+BackgroundProcess* findProcess(DWORD pid) {
+    for (auto &proc : bgProcesses) {
+        if (proc.pid == pid && proc.status != PROC_TERMINATED) {
+            return &proc;
+        }
     }
-
-    BgProcess &bp = it->second;
-    if (bp.status == STATUS_TERMINATED) {
-        std::cout << "[-] Process " << pid << " already terminated.\n";
-        return false;
-    }
-
-    TerminateProcess(bp.hProcess, 0);
-    WaitForSingleObject(bp.hProcess, 500);  // Wait briefly for cleanup
-    CloseHandle(bp.hProcess);
-    CloseHandle(bp.hThread);
-    bp.status = STATUS_TERMINATED;
-
-    std::cout << "[+] Process " << pid << " (" << bp.cmdName << ") killed.\n";
-    return true;
+    return nullptr;
 }
 
-// ============================================================
-// stopProcess - Suspend a running process by PID
-// API: SuspendThread(hThread)
-// ============================================================
-bool stopProcess(DWORD pid) {
-    auto it = bgProcesses.find(pid);
-    if (it == bgProcesses.end()) {
-        std::cout << "[-] Error: Process " << pid << " not found.\n";
-        return false;
+void killProcess(DWORD pid) {
+    BackgroundProcess* proc = findProcess(pid);
+    if (!proc) {
+        std::cout << RED << "[-] Process " << pid << " not found.\n" << RESET;
+        return;
     }
 
-    BgProcess &bp = it->second;
-    if (bp.status != STATUS_RUNNING) {
-        std::cout << "[-] Process " << pid << " is not running (status: "
-                  << getStatusString(bp.status) << ").\n";
-        return false;
+    if (TerminateProcess(proc->hProcess, 0)) {
+        WaitForSingleObject(proc->hProcess, 1000);
+        proc->status = PROC_TERMINATED;
+        CloseHandle(proc->hProcess);
+        CloseHandle(proc->hThread);
+        proc->hProcess = NULL;
+        proc->hThread  = NULL;
+        std::cout << GREEN << "[+] Process " << pid << " killed.\n" << RESET;
+    } else {
+        std::cout << RED << "[-] Failed to kill process " << pid
+                  << ". Error: " << GetLastError() << "\n" << RESET;
     }
-
-    SuspendThread(bp.hThread);
-    bp.status = STATUS_STOPPED;
-
-    std::cout << "[+] Process " << pid << " (" << bp.cmdName << ") stopped.\n";
-    return true;
 }
 
-// ============================================================
-// resumeProcess - Resume a suspended process by PID
-// API: ResumeThread(hThread)
-// ============================================================
-bool resumeProcess(DWORD pid) {
-    auto it = bgProcesses.find(pid);
-    if (it == bgProcesses.end()) {
-        std::cout << "[-] Error: Process " << pid << " not found.\n";
-        return false;
+void stopProcess(DWORD pid) {
+    BackgroundProcess* proc = findProcess(pid);
+    if (!proc) {
+        std::cout << RED << "[-] Process " << pid << " not found.\n" << RESET;
+        return;
     }
 
-    BgProcess &bp = it->second;
-    if (bp.status != STATUS_STOPPED) {
-        std::cout << "[-] Process " << pid << " is not stopped (status: "
-                  << getStatusString(bp.status) << ").\n";
-        return false;
+    if (proc->status == PROC_STOPPED) {
+        std::cout << YELLOW << "[!] Process " << pid << " is already stopped.\n" << RESET;
+        return;
+    }
+    bool suspended = false;
+    HMODULE hNtDll = GetModuleHandleA("ntdll.dll");
+    if (hNtDll) {
+        typedef LONG(NTAPI* pfnNtSuspendProcess)(HANDLE ProcessHandle);
+        pfnNtSuspendProcess NtSuspendProcess = (pfnNtSuspendProcess)GetProcAddress(hNtDll, "NtSuspendProcess");
+        if (NtSuspendProcess) {
+            LONG status = NtSuspendProcess(proc->hProcess);
+            if (status >= 0) { // NT_SUCCESS
+                suspended = true;
+            }
+        }
+    }
+    if (!suspended) {
+        DWORD result = SuspendThread(proc->hThread);
+        if (result != (DWORD)-1) {
+            suspended = true;
+        }
     }
 
-    ResumeThread(bp.hThread);
-    bp.status = STATUS_RUNNING;
-
-    std::cout << "[+] Process " << pid << " (" << bp.cmdName << ") resumed.\n";
-    return true;
+    if (suspended) {
+        proc->status = PROC_STOPPED;
+        std::cout << GREEN << "[+] Process " << pid << " stopped.\n" << RESET;
+    } else {
+        std::cout << RED << "[-] Failed to stop process " << pid
+                  << ". Error: " << GetLastError() << "\n" << RESET;
+    }
 }
 
-// ============================================================
-// cleanupAllProcesses - Terminate and close all remaining
-// processes. Called when the shell exits.
-// ============================================================
+void resumeProcess(DWORD pid) {
+    BackgroundProcess* proc = findProcess(pid);
+    if (!proc) {
+        std::cout << RED << "[-] Process " << pid << " not found.\n" << RESET;
+        return;
+    }
+
+    if (proc->status != PROC_STOPPED) {
+        std::cout << YELLOW << "[!] Process " << pid << " is not stopped.\n" << RESET;
+        return;
+    }
+    bool resumed = false;
+    HMODULE hNtDll = GetModuleHandleA("ntdll.dll");
+    if (hNtDll) {
+        typedef LONG(NTAPI* pfnNtResumeProcess)(HANDLE ProcessHandle);
+        pfnNtResumeProcess NtResumeProcess = (pfnNtResumeProcess)GetProcAddress(hNtDll, "NtResumeProcess");
+        if (NtResumeProcess) {
+            LONG status = NtResumeProcess(proc->hProcess);
+            if (status >= 0) { // NT_SUCCESS
+                resumed = true;
+            }
+        }
+    }
+    if (!resumed) {
+        DWORD result = ResumeThread(proc->hThread);
+        if (result != (DWORD)-1) {
+            resumed = true;
+        }
+    }
+
+    if (resumed) {
+        proc->status = PROC_RUNNING;
+        std::cout << GREEN << "[+] Process " << pid << " resumed.\n" << RESET;
+    } else {
+        std::cout << RED << "[-] Failed to resume process " << pid
+                  << ". Error: " << GetLastError() << "\n" << RESET;
+    }
+}
+
 void cleanupAllProcesses() {
-    for (auto &[pid, bp] : bgProcesses) {
-        if (bp.status != STATUS_TERMINATED) {
-            TerminateProcess(bp.hProcess, 0);
-            WaitForSingleObject(bp.hProcess, 300);
-            CloseHandle(bp.hProcess);
-            CloseHandle(bp.hThread);
-            bp.status = STATUS_TERMINATED;
+    for (auto &proc : bgProcesses) {
+        if (proc.status != PROC_TERMINATED) {
+            TerminateProcess(proc.hProcess, 0);
+            WaitForSingleObject(proc.hProcess, 1000);
+            CloseHandle(proc.hProcess);
+            CloseHandle(proc.hThread);
+            proc.status   = PROC_TERMINATED;
+            proc.hProcess = NULL;
+            proc.hThread  = NULL;
         }
     }
     bgProcesses.clear();

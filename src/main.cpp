@@ -1,19 +1,7 @@
-// ============================================================
-// MYSHELL - MAIN ENTRY POINT
-// ============================================================
-// A tiny shell for Windows, built as an Operating Systems
-// course project at HUST.
-//
-// Architecture:
-//   main.cpp          -> REPL loop + CTRL+C handler
-//   parser.h          -> Parse input into ParsedCommand
-//   builtins.h        -> Execute built-in commands
-//   executor.h        -> CreateProcess for external commands
-//   process_manager.h -> Track and manage background processes
-// ============================================================
-
 #include <iostream>
+#include <fstream>
 #include <string>
+#include <algorithm>
 
 #include "set_color.h"
 #include "parser.h"
@@ -21,58 +9,144 @@
 #include "builtins.h"
 #include "executor.h"
 
-// ============================================================
-// CTRL+C HANDLER
-// ============================================================
-// Without this handler, CTRL+C would kill BOTH the shell and
-// any running child process. We want to:
-//   - Keep the shell alive (return TRUE)
-//   - Let the foreground child process die naturally
-//
-// See: SetConsoleCtrlHandler() documentation
-// ============================================================
-BOOL WINAPI CtrlHandler(DWORD ctrlType) {
-    if (ctrlType == CTRL_C_EVENT) {
-        if (fg_pid != 0) {
-            // A foreground process is running.
-            // The OS will also deliver CTRL+C to the child process,
-            // which will cause it to terminate. We just need to
-            // survive by returning TRUE.
-            return TRUE;
-        }
-        // No foreground process --- just reprint the prompt.
-        std::cout << "\nmyShell> ";
-        return TRUE;
-    }
-    return FALSE;  // Let the OS handle other control signals
-}
-
-// ============================================================
-// printPrompt - Display the shell prompt with current directory
-// ============================================================
 void printPrompt() {
     char cwd[MAX_PATH];
     GetCurrentDirectoryA(MAX_PATH, cwd);
-    std::cout << GREEN << "myShell " << RESET 
+    std::cout << '\n' << GREEN << "myShell " << RESET 
               << CYAN << cwd << RESET 
               << "> ";
 }
 
-// ============================================================
-// MAIN - The REPL (Read-Eval-Print Loop)
-// ============================================================
-int main() {
-    // ---- Initialization ----
-    // Enable ANSI escape codes for colored output on Windows 10+
+BOOL WINAPI CtrlHandler(DWORD ctrlType) {
+    if (ctrlType == CTRL_C_EVENT) {
+        stopBatchExecution = TRUE;
+        if (isRunningForeground && hForegroundProcess != NULL) {
+            TerminateProcess(hForegroundProcess, 0);
+            return TRUE;
+        }
+        std::cout << "\n";
+        printPrompt();
+        return TRUE;
+    }
+    return FALSE;  
+}
+
+static bool isBatFile(const std::string &cmd) {
+    std::string lower = cmd;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    size_t len = lower.size();
+    if (len >= 4 && (lower.substr(len - 4) == ".bat" || lower.substr(len - 4) == ".cmd")) {
+        return true;
+    }
+    return false;
+}
+
+void execute_bat_file(const std::string &filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cout << RED << "[-] Error: Cannot open file '" << filename << "'\n" << RESET;
+        return;
+    }
+
+    std::cout << CYAN << "[*] Executing batch file: " << filename << "\n" << RESET;
+
+    stopBatchExecution = FALSE; 
+    bool echoOn = true;  
+    std::string line;
+
+
+    while (std::getline(file, line)) {
+        if (stopBatchExecution) {
+            std::cout << RED << "[!] Batch file execution interrupted.\n" << RESET;
+            break;
+        }
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) continue;
+        std::string lowerLine = line;
+        std::transform(lowerLine.begin(), lowerLine.end(), lowerLine.begin(), ::tolower);
+        bool suppressEcho = false;
+        std::string processLine = line;
+        if (!processLine.empty() && processLine[0] == '@') {
+            suppressEcho = true;
+            processLine = processLine.substr(1);
+            size_t start = processLine.find_first_not_of(" \t");
+            if (start != std::string::npos) {
+                processLine = processLine.substr(start);
+            } else {
+                continue;  
+            }
+        }
+        std::string lowerProcess = processLine;
+        std::transform(lowerProcess.begin(), lowerProcess.end(), lowerProcess.begin(), ::tolower);
+        size_t trimStart = lowerProcess.find_first_not_of(" \t");
+        size_t trimEnd = lowerProcess.find_last_not_of(" \t");
+        std::string trimmedProcess;
+        if (trimStart != std::string::npos) {
+            trimmedProcess = lowerProcess.substr(trimStart, trimEnd - trimStart + 1);
+        }
+
+        if (trimmedProcess == "echo off") {
+            echoOn = false;
+            continue;
+        }
+        if (trimmedProcess == "echo on") {
+            echoOn = true;
+            continue;
+        }
+        if (lowerProcess.substr(0, 4) == "rem " || lowerProcess.substr(0, 3) == "rem" ||
+            processLine.substr(0, 2) == "::") {
+            continue;
+        }
+        if (echoOn && !suppressEcho) {
+            std::cout << YELLOW << ">> " << processLine << RESET << "\n";
+        }
+        ParsedCommand cmd = parse_command(processLine);
+        if (cmd.command.empty()) continue;
+        if (cmd.command == "exit") {
+            std::cout << CYAN << "[*] Batch file ended by 'exit' command.\n" << RESET;
+            break;
+        }
+        if (!handle_builtin(cmd.command, cmd.argc, cmd.args)) {
+            execute_command(cmd);
+        }
+    }
+
+    file.close();
+    std::cout << CYAN << "[*] Batch file '" << filename << "' finished.\n" << RESET;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc > 1) {
+        std::string batchFile = argv[1];
+        for (int i = 2; i < argc; ++i) {
+            if (std::string(argv[i]) == "--paths" && i + 1 < argc) {
+                std::string pathsStr = argv[i + 1];
+                size_t pos = 0;
+                while ((pos = pathsStr.find(';')) != std::string::npos) {
+                    std::string p = pathsStr.substr(0, pos);
+                    if (!p.empty()) {
+                        paths.push_back(p);
+                    }
+                    pathsStr.erase(0, pos + 1);
+                }
+                if (!pathsStr.empty()) {
+                    paths.push_back(pathsStr);
+                }
+                break;
+            }
+        }
+        if (isBatFile(batchFile)) {
+            execute_bat_file(batchFile);
+            return 0;
+        }
+    }
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD dwMode = 0;
     GetConsoleMode(hOut, &dwMode);
     SetConsoleMode(hOut, dwMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-
-    // Register CTRL+C handler so the shell doesn't die
     SetConsoleCtrlHandler(CtrlHandler, TRUE);
-
-    // ---- Welcome message ----
     std::cout << CYAN << BOLD
               << "============================================\n"
               << "    Welcome to myShell! (v1.0)              \n"
@@ -80,36 +154,53 @@ int main() {
               << "============================================\n"
               << RESET << "\n";
 
-    // ---- Main REPL loop ----
     while (true) {
-        // Step 1: Display prompt
         printPrompt();
-
-        // Step 2: Read user input
         std::string input;
         if (!std::getline(std::cin, input)) {
-            // EOF (e.g., Ctrl+Z on Windows) --- exit gracefully
             std::cout << "\n";
             break;
         }
-
-        // Step 3: Skip empty input
         if (input.empty()) continue;
-
-        // Step 4: Parse the input into a structured command
         ParsedCommand cmd = parse_command(input);
         if (cmd.command.empty()) continue;
-
-        // Step 5: Try to execute as a built-in command
         if (handle_builtin(cmd.command, cmd.argc, cmd.args)) {
-            continue;   // Built-in handled it, back to prompt
+            continue;   
         }
+        if (isBatFile(cmd.command)) {
+            if (cmd.isBackground) {
+                char szPath[MAX_PATH];
+                GetModuleFileNameA(NULL, szPath, MAX_PATH);
 
-        // Step 6: Not a built-in --- execute as an external command
+                ParsedCommand bgBatCmd;
+                bgBatCmd.command = cmd.command;
+                bgBatCmd.args.push_back(szPath);
+                bgBatCmd.args.push_back(cmd.command);
+                if (!paths.empty()) {
+                    bgBatCmd.args.push_back("--paths");
+                    std::string pathsStr;
+                    for (size_t i = 0; i < paths.size(); ++i) {
+                        if (i > 0) pathsStr += ";";
+                        pathsStr += paths[i];
+                    }
+                    bgBatCmd.args.push_back(pathsStr);
+                }
+
+                bgBatCmd.argc = bgBatCmd.args.size();
+                bgBatCmd.isBackground = true;
+                bgBatCmd.fullCommandLine = "\"" + std::string(szPath) + "\"";
+                for (size_t i = 1; i < bgBatCmd.args.size(); ++i) {
+                    bgBatCmd.fullCommandLine += " " + bgBatCmd.args[i];
+                }
+
+                execute_command(bgBatCmd);
+            } else {
+                execute_bat_file(cmd.command);
+            }
+            continue;
+        }
         execute_command(cmd);
     }
-
-    // ---- Cleanup ----
     cleanupAllProcesses();
     return 0;
 }
