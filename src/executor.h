@@ -108,7 +108,8 @@ static std::string buildCommandLine(const ParsedCommand &cmd) {
             commandLine += " " + cmd.args[i];
         }
     } else {
-        commandLine = cmd.command;
+        // Không tìm được file → chạy qua cmd.exe (internal commands)
+        commandLine = "cmd.exe /c " + cmd.command;
         for (size_t i = 1; i < cmd.args.size(); ++i) {
             commandLine += " " + cmd.args[i];
         }
@@ -129,8 +130,12 @@ void execute_command(const ParsedCommand &cmd) {
     cmdLine[sizeof(cmdLine) - 1] = '\0';
     std::string resolvedPath = resolveFromCustomPaths(cmd.command);
     bool isExe = isExeFile(cmd.command, resolvedPath);
+    
+    // Detect nếu chạy qua cmd.exe (internal commands)
+    bool isCmdExeCommand = commandLine.find("cmd.exe /c") == 0;
+    
     DWORD creationFlags = 0;
-    if (isExe) {
+    if (isExe && !isCmdExeCommand) {
         if (cmd.isBackground) {
             creationFlags = CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP;
         } else {
@@ -143,9 +148,10 @@ void execute_command(const ParsedCommand &cmd) {
     HANDLE hNul = INVALID_HANDLE_VALUE;
     BOOL inheritHandles = FALSE;
 
-    if (isExe) {
+    if (isExe && !isCmdExeCommand) {
         inheritHandles = FALSE;
     } else {
+        // cmd.exe /c commands hoặc non-exe commands cần kế thừa handles
         if (cmd.isBackground) {
             SECURITY_ATTRIBUTES sa;
             sa.nLength = sizeof(SECURITY_ATTRIBUTES);

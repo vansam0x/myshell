@@ -6,6 +6,7 @@
 #include <vector>
 #include <windows.h>
 #include <iostream>
+#include <iomanip>
 #include <algorithm>
 #include <cctype>
 
@@ -26,7 +27,7 @@ void help() {
     std::cout << YELLOW << "\n Path Management:\n" << RESET;
     std::cout << "   path                 Show custom search paths\n";
     std::cout << "   addpath <path>       Add a directory to search paths\n";
-    std::cout << "   delpath <idx|path>   Remove a directory from search paths\n";
+    std::cout << "   delpath <path>   Remove a directory from search paths\n";
 
     std::cout << YELLOW << "\n Process Management:\n" << RESET;
     std::cout << "   list                 List all background processes\n";

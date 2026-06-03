@@ -1,7 +1,7 @@
 echo off
 date
 time
-a
+a &
 dir
 echo on 
 help
