@@ -1,4 +1,4 @@
-@echo off
+echo off
 echo === myShell bat test ===
 echo Current date:
 date

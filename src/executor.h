@@ -131,9 +131,10 @@ void execute_command(const ParsedCommand &cmd) {
     bool isExe = isExeFile(cmd.command, resolvedPath);
     DWORD creationFlags = 0;
     if (isExe) {
-        creationFlags = CREATE_NEW_CONSOLE;
         if (cmd.isBackground) {
-            creationFlags |= CREATE_NEW_PROCESS_GROUP;
+            creationFlags = CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP;
+        } else {
+            creationFlags = 0;  // Chạy trực tiếp trên shell hiện tại
         }
     } else {
         creationFlags = cmd.isBackground ? (CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS) : 0;
