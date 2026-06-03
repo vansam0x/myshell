@@ -2,6 +2,7 @@
 #include <fstream>
 #include <string>
 #include <algorithm>
+#define cout cerr 
 
 #include "set_color.h"
 #include "parser.h"
@@ -12,7 +13,7 @@
 void printPrompt() {
     char cwd[MAX_PATH];
     GetCurrentDirectoryA(MAX_PATH, cwd);
-    std::cout << '\n' << GREEN << "myShell " << RESET 
+    std::cout << '\n' << GREEN << "vansam shell " << RESET 
               << CYAN << cwd << RESET 
               << "> ";
 }
