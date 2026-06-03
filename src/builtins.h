@@ -1,16 +1,3 @@
-// ============================================================
-// BUILTINS MODULE
-// ============================================================
-// Built-in commands are executed directly inside the shell
-// process, NOT in a child process.
-//
-// Reason: commands like 'exit' and 'addpath' must modify the
-// shell's own state. A child process cannot do that.
-//
-// Supported: help, exit, cd, dir, date, time, path, addpath,
-//            list, kill, stop, resume
-// ============================================================
-
 #pragma once
 
 #include "set_color.h"
@@ -22,9 +9,6 @@
 #include <algorithm>
 #include <cctype>
 
-// ============================================================
-// help - Print usage guide
-// ============================================================
 void help() {
     std::cout << CYAN << BOLD
               << "============================================\n"
@@ -58,9 +42,6 @@ void help() {
               << "============================================\n" << RESET;
 }
 
-// ============================================================
-// path - Display custom search paths
-// ============================================================
 std::vector<std::string> paths;
 
 void path() {
@@ -74,24 +55,42 @@ void path() {
     }
 }
 
-// ============================================================
-// addpath - Add a directory to custom search paths
-// ============================================================
 void addpath(const std::string &new_path) {
-    paths.push_back(new_path);
-    std::cout << "[+] Path added: " << new_path << "\n";
+    std::string trimmed = new_path;
+    size_t start = trimmed.find_first_not_of(" \t");
+    size_t end = trimmed.find_last_not_of(" \t");
+    if (start != std::string::npos) {
+        trimmed = trimmed.substr(start, end - start + 1);
+    }
+
+    if (trimmed.empty()) {
+        std::cout << "[-] Error: Path cannot be empty\n";
+        return;
+    }
+    for (const auto &p : paths) {
+        std::string p_lower = p;
+        std::string trimmed_lower = trimmed;
+        std::transform(p_lower.begin(), p_lower.end(), p_lower.begin(), ::tolower);
+        std::transform(trimmed_lower.begin(), trimmed_lower.end(), trimmed_lower.begin(), ::tolower);
+        if (p_lower == trimmed_lower) {
+            std::cout << "[-] Error: Path already exists in search paths\n";
+            return;
+        }
+    }
+    DWORD attrs = GetFileAttributesA(trimmed.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        std::cout << "[-] Error: Directory does not exist or is not accessible: " << trimmed << "\n";
+        return;
+    }
+    paths.push_back(trimmed);
+    std::cout << "[+] Path added: " << trimmed << "\n";
 }
 
-// ============================================================
-// delpath - Remove a directory from custom search paths
-// ============================================================
 void delete_path(const std::string &target) {
     if (target.empty()) {
         std::cout << "Usage: delpath <index | path_string>\n";
         return;
     }
-
-    // Try to parse target as index (1-based)
     bool isIndex = true;
     for (char c : target) {
         if (!isdigit(c)) {
@@ -112,8 +111,6 @@ void delete_path(const std::string &target) {
             return;
         }
     }
-
-    // Try to remove by string matching
     auto it = std::find(paths.begin(), paths.end(), target);
     if (it != paths.end()) {
         paths.erase(it);
@@ -123,9 +120,6 @@ void delete_path(const std::string &target) {
     }
 }
 
-// ============================================================
-// dir - List files in a directory
-// ============================================================
 void dir(std::string dirPath = "") {
     if (dirPath.empty()) {
         char buf[MAX_PATH];
@@ -158,28 +152,24 @@ void dir(std::string dirPath = "") {
 
     std::cout << "\n  " << fileCount << " file(s), " << dirCount << " dir(s)\n";
 }
-
-// ============================================================
-// get_time - Display current time
-// ============================================================
 void get_time() {
     SYSTEMTIME st;
     GetLocalTime(&st);
-    printf("Time: %02d:%02d:%02d\n", st.wHour, st.wMinute, st.wSecond);
+    // printf("Time: %02d:%02d:%02d\n", st.wHour, st.wMinute, st.wSecond);
+    std::cout << "Time : " << std::setfill('0') << std::setw(2) << st.wHour << ":"
+              << std::setfill('0') << std::setw(2) << st.wMinute << ":"
+              << std::setfill('0') << std::setw(2) << st.wSecond << "\n";
 }
 
-// ============================================================
-// get_date - Display current date
-// ============================================================
 void get_date() {
     SYSTEMTIME st;
     GetLocalTime(&st);
-    printf("Date: %02d/%02d/%04d\n", st.wDay, st.wMonth, st.wYear);
+    // printf("Date: %02d/%02d/%04d\n", st.wDay, st.wMonth, st.wYear);
+    std::cout << "Date : " << std::setfill('0') << std::setw(2) << st.wDay << "/"
+              << std::setfill('0') << std::setw(2) << st.wMonth << "/"
+              << st.wYear << "\n";
 }
 
-// ============================================================
-// cd - Change current directory
-// ============================================================
 void cd(const std::string &path) {
     if (SetCurrentDirectoryA(path.c_str())) {
         char buf[MAX_PATH];
@@ -190,15 +180,7 @@ void cd(const std::string &path) {
     }
 }
 
-// ============================================================
-// handle_builtin - Dispatch built-in commands
-// Returns true if the command was a built-in, false otherwise.
-//
-// Note: args[0] = command name, args[1..] = actual arguments
-// ============================================================
 bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::string> &args) {
-
-    // ---- General commands ----
     if (cmd == "help") {
         help();
         return true;
@@ -210,7 +192,6 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
     }
     if (cmd == "cd") {
         if (argc < 2) {
-            // No argument: print current directory
             char buf[MAX_PATH];
             GetCurrentDirectoryA(MAX_PATH, buf);
             std::cout << buf << "\n";
@@ -220,8 +201,8 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
         return true;
     }
     if (cmd == "dir") {
-        if (argc < 2) dir();       // No argument: current directory
-        else           dir(args[1]);
+        if (argc < 2) dir();
+        else dir(args[1]);
         return true;
     }
     if (cmd == "date") {
@@ -232,8 +213,29 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
         get_time();
         return true;
     }
+    if (cmd == "echo") {
+        if (argc < 2) {
+            std::cout << "\n";
+        } else {
+            std::string arg = args[1];
+            std::string lower_arg = arg;
+            std::transform(lower_arg.begin(), lower_arg.end(), lower_arg.begin(), ::tolower);
 
-    // ---- Path management ----
+            if (lower_arg == "on") {
+                std::cout << "[+] Echo mode: ON\n";
+            } else if (lower_arg == "off") {
+                std::cout << "[+] Echo mode: OFF\n";
+            } else {
+                for (size_t i = 1; i < argc; ++i) {
+                    if (i > 1) std::cout << " ";
+                    std::cout << args[i];
+                }
+                std::cout << "\n";
+            }
+        }
+        return true;
+    }
+
     if (cmd == "path") {
         path();
         return true;
@@ -259,7 +261,6 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
         return true;
     }
 
-    // ---- Process management ----
     if (cmd == "list") {
         listProcesses();
         return true;
@@ -292,5 +293,5 @@ bool handle_builtin(const std::string &cmd, size_t argc, const std::vector<std::
         return true;
     }
 
-    return false;  // Not a built-in command
+    return false;  
 }
